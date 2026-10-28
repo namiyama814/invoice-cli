@@ -35,15 +35,15 @@ async function main() {
   const [command, input] = positionals;
   if (!command) { console.log(help); return; }
   if (command === 'init') {
-    if (positionals.length !== 1 || values.output) throw new Error('使い方: invoice-cli init [--type <種別>] [--force]');
+    if (positionals.length !== 1 || values.output !== undefined) throw new Error('使い方: invoice-cli init [--type <種別>] [--force]');
     const type = parseDocumentType(values.type ?? 'invoice');
     const filename = `${type}.json`;
     await saveAtomic(filename, JSON.stringify(exampleFor(type), null, 2) + '\n', values.force ?? false);
     console.log(resolve(filename)); return;
   }
-  if (values.type) throw new Error('--typeはinitで指定してください。生成時はJSONのtypeを使います。');
+  if (values.type !== undefined) throw new Error('--typeはinitで指定してください。生成時はJSONのtypeを使います。');
   if (!['validate', 'generate'].includes(command) || positionals.length !== 2 || !input) throw new Error('コマンドが不正です。--helpを確認してください。');
-  if (command === 'validate' && (values.output || values.force)) throw new Error('validateに--outputや--forceは指定できません。');
+  if (command === 'validate' && (values.output !== undefined || values.force)) throw new Error('validateに--outputや--forceは指定できません。');
   if (command === 'generate' && !values.output) throw new Error('保存先を-oで指定してください。');
   let text: string;
   if (input === '-') {
@@ -54,15 +54,18 @@ async function main() {
   let raw: unknown;
   try { raw = JSON.parse(text); } catch { throw new Error('入力が有効なJSONではありません。'); }
   const invoice = parseDocument(raw);
-  const stamp = 'stamp' in invoice && invoice.stamp ? await loadStamp(invoice.stamp, input === '-' ? process.cwd() : dirname(resolve(input))) : undefined;
+  const base = input === '-' ? process.cwd() : dirname(resolve(input));
+  const stampPath = 'stamp' in invoice && invoice.stamp ? resolve(base, invoice.stamp) : undefined;
+  const stamp = stampPath ? await loadStamp(stampPath, base) : undefined;
   if (command === 'validate') {
     const sums = calculateDocument(invoice);
     if (!('subtotal' in sums)) { console.log(`入力は有効です。\n合計: ${sums.total.toLocaleString('ja-JP')} 円`); return; }
     console.log(`入力は有効です。\n小計: ${sums.subtotal.toLocaleString('ja-JP')} 円\n消費税: ${sums.tax.toLocaleString('ja-JP')} 円\n源泉徴収額: ${sums.withholdingTax.toLocaleString('ja-JP')} 円\n合計: ${sums.total.toLocaleString('ja-JP')} 円`); return;
   }
-  await checkOutput(values.output!, values.force ?? false);
+  const protectedPaths = [...(input === '-' ? [] : [resolve(input)]), ...(stampPath ? [stampPath] : [])];
+  await checkOutput(values.output!, values.force ?? false, protectedPaths);
   const pdf = await generatePdf(invoice, stamp);
-  await saveAtomic(values.output!, pdf, values.force ?? false);
+  await saveAtomic(values.output!, pdf, values.force ?? false, protectedPaths);
   console.log(resolve(values.output!));
 }
 main().catch(error => {

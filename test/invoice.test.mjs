@@ -102,7 +102,7 @@ test('CLIのファイル・標準入力・初期化・終了コード', async t 
   assert.equal(run(dir, ['validate', 'missing.json']).status, 1);
   assert.equal(run(dir, ['--unknown']).status, 1);
   assert.match(run(dir, ['--help']).stdout, /使い方/);
-  assert.equal(run(dir, ['--version']).stdout.trim(), '0.2.0');
+  assert.equal(run(dir, ['--version']).stdout.trim(), '0.2.1');
   await writeFile(join(dir, 'exists.pdf'), 'original');
   assert.equal(run(dir, ['generate', 'invoice.json', '-o', 'exists.pdf']).status, 1);
   assert.equal(await readFile(join(dir, 'exists.pdf'), 'utf8'), 'original');

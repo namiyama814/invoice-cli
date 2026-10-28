@@ -1,4 +1,4 @@
-import { readFile, stat, access, mkdtemp, writeFile, rename, link, rm } from 'node:fs/promises';
+import { readFile, stat, lstat, access, mkdtemp, writeFile, rename, link, rm } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 export async function loadStamp(path: string, base: string) {
@@ -13,15 +13,33 @@ export async function loadStamp(path: string, base: string) {
   if (extension === '.png' ? !png : !jpeg) throw new Error('印鑑画像の内容と拡張子が一致しません。');
   return { data, name: basename(fullPath), type: png ? 'image/png' : 'image/jpeg' };
 }
-export async function checkOutput(path: string, force: boolean) {
-  if (force) return;
-  try { await access(path, constants.F_OK); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
-  throw new Error('保存先が存在します。上書きするには--forceを指定してください。');
-}
-export async function saveAtomic(path: string, data: Uint8Array | string, force: boolean) {
+export async function checkOutput(path: string, force: boolean, protectedPaths: readonly string[] = []) {
   const fullPath = resolve(path);
-  await checkOutput(fullPath, force);
+  let entry;
+  try { entry = await lstat(fullPath); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  for (const source of protectedPaths) {
+    const message = '保存先を入力JSONや印鑑画像と同じファイルにはできません。';
+    if (fullPath === resolve(source)) throw new Error(message);
+    if (entry) {
+      // Follow symlinks and compare file identities to cover aliases and hardlinks.
+      let target;
+      try { target = await stat(fullPath); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+      const input = await stat(source);
+      if (target && target.dev === input.dev && target.ino === input.ino) throw new Error(message);
+    }
+  }
+  if (entry?.isDirectory()) throw new Error('保存先にディレクトリは指定できません。');
+  if (entry && !force) throw new Error('保存先が存在します。上書きするには--forceを指定してください。');
+  // Fail before sending invoice data when the destination cannot be created.
+  const parent = dirname(fullPath);
+  if (!(await stat(parent)).isDirectory()) throw new Error('保存先の親にディレクトリを指定してください。');
+  await access(parent, constants.W_OK | constants.X_OK);
+}
+export async function saveAtomic(path: string, data: Uint8Array | string, force: boolean, protectedPaths: readonly string[] = []) {
+  const fullPath = resolve(path);
+  await checkOutput(fullPath, force, protectedPaths);
   const temp = await mkdtemp(join(dirname(fullPath), '.invoice-cli-'));
   try {
     const file = join(temp, 'output');

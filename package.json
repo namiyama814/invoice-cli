@@ -1,6 +1,6 @@
 {
   "name": "invoice-cli",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "codeforfun.jpの請求書をJSONからPDFにするCLI",
   "type": "module",
   "bin": {

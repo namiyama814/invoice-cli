@@ -5,6 +5,9 @@ export const endpoint = 'https://codeforfun.jp/tools/invoice/invoice.php';
 type Stamp = Awaited<ReturnType<typeof loadStamp>>;
 const format = (value: number) => String(value).replace(/(\d)(?=(\d{3})+(?!\d))/g, '$1,');
 const yen = (value: number) => `${format(value)} 円`;
+// The remote templates embed form values in TCPDF HTML without escaping them.
+// Encode text once at this boundary so <...> and entities remain literal text.
+const escapeText = (value: string) => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
 export function createForm(invoice: Invoice, stamp?: Stamp) {
   const form = new FormData();
   const amounts = calculate(invoice);
@@ -12,13 +15,13 @@ export function createForm(invoice: Invoice, stamp?: Stamp) {
   for (const [key, field] of Object.entries(mapping)) {
     let value = invoice[key as keyof typeof mapping] ?? '';
     if (key === 'invoiceDate' || key === 'dueDate') value = value.replaceAll('-', '/');
-    form.append(field, value);
+    form.append(field, escapeText(value));
   }
   form.append('hidden_tax_include', invoice.taxEnabled ? '1' : '2');
   form.append('hidden_tax_rate', String(invoice.taxRate));
   form.append('hidden_gensen_include', invoice.withholdingTax > 0 ? '1' : '2');
   invoice.items.forEach((item, index) => {
-    form.append('item_name[]', item.name);
+    form.append('item_name[]', escapeText(item.name));
     form.append('item_unit[]', format(item.unitPrice));
     form.append('item_qnt[]', format(item.quantity));
     form.append('item_price[]', format(amounts.amounts[index]!));
@@ -39,7 +42,7 @@ export function documentEndpoint(doc: Invoice | Document) {
 export function createDocumentForm(doc: Invoice | Document, stamp?: Stamp) {
   if (!('type' in doc) || doc.type === 'invoice') return createForm(doc, stamp);
   const form = new FormData();
-  const put = (key: string, value: string | number | undefined) => form.append(key, String(value ?? ''));
+  const put = (key: string, value: string | number | undefined) => form.append(key, escapeText(String(value ?? '')));
   put('to', doc.to); put('to_address', doc.toAddress); put('from_address', doc.fromAddress); put('subject', doc.subject);
   if (doc.type === 'receipt') {
     put('receipt_num', doc.documentNumber); put('receipt_date', doc.documentDate?.replaceAll('-', '/'));
