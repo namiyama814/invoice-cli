@@ -1,0 +1,16 @@
+{
+  "name": "invoice-cli",
+  "version": "0.1.0",
+  "description": "codeforfun.jpの請求書をJSONからPDFにするCLI",
+  "type": "module",
+  "bin": { "invoice-cli": "dist/cli.js" },
+  "files": ["dist", "README.md", "LICENSE"],
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "build": "tsc",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "prepack": "npm run build"
+  },
+  "license": "MIT",
+  "devDependencies": { "@types/node": "^22.0.0", "typescript": "^5.9.0" }
+}
