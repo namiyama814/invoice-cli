@@ -1,4 +1,5 @@
 import { calculate, type Invoice } from './invoice.js';
+import { calculateDocument, type Document, type QualifiedInvoice } from './documents.js';
 import type { loadStamp } from './files.js';
 export const endpoint = 'https://codeforfun.jp/tools/invoice/invoice.php';
 type Stamp = Awaited<ReturnType<typeof loadStamp>>;
@@ -30,10 +31,52 @@ export function createForm(invoice: Invoice, stamp?: Stamp) {
   if (stamp) form.append('stamp', new Blob([new Uint8Array(stamp.data)], { type: stamp.type }), stamp.name);
   return form;
 }
-export async function generatePdf(invoice: Invoice, stamp?: Stamp, options: { url?: string; timeoutMs?: number } = {}) {
+export function documentEndpoint(doc: Invoice | Document) {
+  const type = 'type' in doc ? doc.type : 'invoice';
+  const script = type === 'invoice2' ? 'invoice' : type;
+  return `https://codeforfun.jp/tools/${type}/${script}.php`;
+}
+export function createDocumentForm(doc: Invoice | Document, stamp?: Stamp) {
+  if (!('type' in doc) || doc.type === 'invoice') return createForm(doc, stamp);
+  const form = new FormData();
+  const put = (key: string, value: string | number | undefined) => form.append(key, String(value ?? ''));
+  put('to', doc.to); put('to_address', doc.toAddress); put('from_address', doc.fromAddress); put('subject', doc.subject);
+  if (doc.type === 'receipt') {
+    put('receipt_num', doc.documentNumber); put('receipt_date', doc.documentDate?.replaceAll('-', '/'));
+    put('total', format(doc.total)); put('no_tax', doc.netAmount === undefined ? '' : format(doc.netAmount));
+    put('details', doc.details); put('tax', doc.taxDescription); put('layout', doc.layout === 'landscape' ? '2' : '1');
+    return form;
+  }
+  const qualified = doc.type === 'invoice2';
+  const prefix = qualified ? 'invoice' : doc.type;
+  put(`${prefix}_num`, qualified ? doc.invoiceNumber : doc.documentNumber);
+  put(`${prefix}_date`, (qualified ? doc.invoiceDate : doc.documentDate)?.replaceAll('-', '/'));
+  put('note', doc.note);
+  if (qualified) {
+    put('invoice_deadline', doc.dueDate?.replaceAll('-', '/')); put('registration_number', doc.registrationNumber); put('bank_detail', doc.bankDetails);
+    if (stamp) form.append('stamp', new Blob([new Uint8Array(stamp.data)], { type: stamp.type }), stamp.name);
+  } else put('tax_include', doc.taxEnabled ? '1' : '2');
+  const sums = calculateDocument(doc);
+  if (!('amounts' in sums)) throw new Error('明細の計算に失敗しました。');
+  doc.items.forEach((item, index) => {
+    const reduced = qualified && (item as QualifiedInvoice['items'][number]).taxRate === 8;
+    put('item_name[]', item.name + (reduced ? '　※' : '')); put('item_unit[]', format(item.unitPrice));
+    put('item_qnt[]', format(item.quantity)); put('item_price[]', format(sums.amounts[index]!));
+  });
+  put('subtotal', yen(sums.subtotal)); put('tax', yen(sums.tax)); put('total', yen(sums.total)); put('format_total', yen(sums.total));
+  if ('sum10' in sums) {
+    put('gensen', `-${format(sums.withholdingTax)} 円`);
+    put('sum_10', yen(sums.sum10)); put('tax_10', yen(sums.tax10)); put('sum_8', yen(sums.sum8)); put('tax_8', yen(sums.tax8));
+  }
+  return form;
+}
+export async function generatePdf(invoice: Invoice | Document, stamp?: Stamp, options: { url?: string; timeoutMs?: number } = {}) {
   const signal = AbortSignal.timeout(options.timeoutMs ?? 30000);
   try {
-    const response = await fetch(options.url ?? endpoint, { method: 'POST', body: createForm(invoice, stamp), signal, redirect: 'error' });
+    const form = createDocumentForm(invoice, stamp);
+    const simple = 'type' in invoice && ['estimate', 'delivery', 'receipt'].includes(invoice.type);
+    const body = simple ? new URLSearchParams(Array.from(form.entries(), ([key, value]) => [key, String(value)])) : form;
+    const response = await fetch(options.url ?? documentEndpoint(invoice), { method: 'POST', body, signal, redirect: 'error' });
     if (!response.ok) throw new Error(`サイトがHTTP ${response.status}を返しました。`);
     const data = Buffer.from(await response.arrayBuffer());
     if (!data.subarray(0, 5).equals(Buffer.from('%PDF-'))) throw new Error('サイトからPDF以外の応答が返されました。');

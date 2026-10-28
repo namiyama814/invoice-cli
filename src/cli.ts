@@ -2,17 +2,19 @@
 import { parseArgs } from 'node:util';
 import { readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-import { parseInvoice, calculate, example } from './invoice.js';
+import { parseDocument, calculateDocument, exampleFor, parseDocumentType } from './documents.js';
 import { loadStamp, checkOutput, saveAtomic } from './files.js';
 import { generatePdf } from './site.js';
-const help = `invoice-cli — JSONから請求書PDFを作成
+const help = `invoice-cli — JSONから帳票PDFを作成
 
 使い方:
-  invoice-cli init [--force]
+  invoice-cli init [--type <種別>] [--force]
   invoice-cli validate <invoice.json|->
   invoice-cli generate <invoice.json|-> -o <invoice.pdf> [--force]
 
   -o, --output <パス>  PDFの保存先
+  --type <種別>       initの帳票種別（既定: invoice）
+                      invoice / estimate / delivery / receipt / invoice2
   --force             既存ファイルを上書き
   -h, --help          ヘルプ
   -v, --version       バージョン
@@ -22,7 +24,7 @@ validateはサイトへ送信しません。`;
 async function main() {
   let args;
   try {
-    args = parseArgs({ options: { output: { type: 'string', short: 'o' }, force: { type: 'boolean' }, help: { type: 'boolean', short: 'h' }, version: { type: 'boolean', short: 'v' } }, allowPositionals: true });
+    args = parseArgs({ options: { type: { type: 'string' }, output: { type: 'string', short: 'o' }, force: { type: 'boolean' }, help: { type: 'boolean', short: 'h' }, version: { type: 'boolean', short: 'v' } }, allowPositionals: true });
   } catch { throw new Error('引数が不正です。--helpを確認してください。'); }
   const { values, positionals } = args;
   if (values.help) { console.log(help); return; }
@@ -33,10 +35,13 @@ async function main() {
   const [command, input] = positionals;
   if (!command) { console.log(help); return; }
   if (command === 'init') {
-    if (positionals.length !== 1 || values.output) throw new Error('使い方: invoice-cli init [--force]');
-    await saveAtomic('invoice.json', JSON.stringify(example, null, 2) + '\n', values.force ?? false);
-    console.log(resolve('invoice.json')); return;
+    if (positionals.length !== 1 || values.output) throw new Error('使い方: invoice-cli init [--type <種別>] [--force]');
+    const type = parseDocumentType(values.type ?? 'invoice');
+    const filename = `${type}.json`;
+    await saveAtomic(filename, JSON.stringify(exampleFor(type), null, 2) + '\n', values.force ?? false);
+    console.log(resolve(filename)); return;
   }
+  if (values.type) throw new Error('--typeはinitで指定してください。生成時はJSONのtypeを使います。');
   if (!['validate', 'generate'].includes(command) || positionals.length !== 2 || !input) throw new Error('コマンドが不正です。--helpを確認してください。');
   if (command === 'validate' && (values.output || values.force)) throw new Error('validateに--outputや--forceは指定できません。');
   if (command === 'generate' && !values.output) throw new Error('保存先を-oで指定してください。');
@@ -48,10 +53,11 @@ async function main() {
   } else text = await readFile(input, 'utf8');
   let raw: unknown;
   try { raw = JSON.parse(text); } catch { throw new Error('入力が有効なJSONではありません。'); }
-  const invoice = parseInvoice(raw);
-  const stamp = invoice.stamp ? await loadStamp(invoice.stamp, input === '-' ? process.cwd() : dirname(resolve(input))) : undefined;
+  const invoice = parseDocument(raw);
+  const stamp = 'stamp' in invoice && invoice.stamp ? await loadStamp(invoice.stamp, input === '-' ? process.cwd() : dirname(resolve(input))) : undefined;
   if (command === 'validate') {
-    const sums = calculate(invoice);
+    const sums = calculateDocument(invoice);
+    if (!('subtotal' in sums)) { console.log(`入力は有効です。\n合計: ${sums.total.toLocaleString('ja-JP')} 円`); return; }
     console.log(`入力は有効です。\n小計: ${sums.subtotal.toLocaleString('ja-JP')} 円\n消費税: ${sums.tax.toLocaleString('ja-JP')} 円\n源泉徴収額: ${sums.withholdingTax.toLocaleString('ja-JP')} 円\n合計: ${sums.total.toLocaleString('ja-JP')} 円`); return;
   }
   await checkOutput(values.output!, values.force ?? false);
